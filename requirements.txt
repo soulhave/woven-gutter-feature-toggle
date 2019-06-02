@@ -1,0 +1,4 @@
+flask
+flask-restplus
+redis
+gutter-python3
