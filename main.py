@@ -1,8 +1,21 @@
+import os
+
 from flask import Flask, Blueprint
 from flask_restplus import Resource, Api, fields
 from gutter.client import get_gutter_client
 from gutter.client.models import Switch
+from redis_collections import Dict
+import redis
 import logging
+import google.cloud.logging
+
+# LOGGING
+client = google.cloud.logging.Client()
+handler = client.get_default_handler()
+cloud_logging = logging.getLogger("cloudLogger")
+cloud_logging.setLevel(logging.INFO)
+cloud_logging.addHandler(handler)
+
 
 # APP FLASK
 app_v1 = Blueprint('api', __name__, url_prefix='/api/v1')
@@ -23,21 +36,20 @@ switch = api.model('switch', {
 })
 
 # REDIS
-# redis_host = os.environ.get('REDIS_HOST', '10.0.0.19')
-# redis_port = int(os.environ.get('REDIS_PORT', 6379))
-# redis_password = os.environ.get('REDIS_PASSWORD', None)
-# redis_client = redis.Redis(host=redis_host, port=redis_port, password=redis_password)
-# redis_dict = RedisDict(keyspace='my_redis', connection=redis_client)
+redis_host = os.environ.get('REDIS_HOST', '10.0.0.19')
+redis_port = int(os.environ.get('REDIS_PORT', 6379))
+redis_client = redis.Redis(host=redis_host, port=redis_port)
+redis_dict = Dict(redis=redis_client, key='woven')
 
 # GUTTER
 manager = get_gutter_client(
-    storage={},
+    storage=redis_dict,
     autocreate=True
 )
 
 
 def prepare_to_return(switch_p):
-    logging.info('[Switch] --> {}'.format(switch_p))
+    cloud_logging.info('[Switch] --> {}'.format(switch_p))
     _active = manager.active(switch_p.name)
     return {'id': switch_p.name,
             'description': switch_p.description,
@@ -64,6 +76,7 @@ class Feature(Resource):
     @ns.expect(switch)
     @ns.marshal_with(switch, code=201)
     def post(self):
+        cloud_logging.info('[POST] -> Payload={}'.format(api.payload))
         _state = Switch.states.DISABLED
         _description = api.payload['id']
 
@@ -80,6 +93,7 @@ class Feature(Resource):
 
     @ns.marshal_list_with(switch, code=201)
     def get(self):
+        cloud_logging.info('[GET] -> empty payload!')
         _switches = [prepare_to_return(_s) for _s in manager.switches]
         return _switches
 
@@ -88,13 +102,14 @@ class Feature(Resource):
 class FeatureId(Resource):
     @ns.marshal_with(switch, code=201)
     def get(self, id):
+        cloud_logging.info('[GET] -> Id={}'.format(id))
         _switch = manager.switch(id)
         return prepare_to_return(_switch)
 
     @ns.marshal_with(switch, code=201)
     @ns.expect(switch)
     def patch(self, id):
-
+        cloud_logging.info('[PATCH] -> Id={} :: Payload={}'.format(id, api.payload))
         _switch = manager.switch(id)
 
         if 'state' in api.payload:
@@ -107,6 +122,16 @@ class FeatureId(Resource):
             _switch.save()
 
         return prepare_to_return(_switch)
+
+    @api.doc(responses={204: ''})
+    def delete(self, id):
+        cloud_logging.info('[DELETE] -> Id={}'.format(id))
+        _switch = manager.switch(id)
+
+        if _switch:
+            manager.unregister(_switch)
+
+        return '', 204
 
 
 if __name__ == '__main__':

@@ -2,3 +2,5 @@ flask
 flask-restplus
 redis
 gutter-python3
+redis_collections
+google-cloud-logging
